@@ -1,106 +1,182 @@
-## Prerequisites
+# Redirectomator
+
+A powerful Discord bot for tracking and managing invite links with detailed analytics. Built with the [Carbon framework](https://carbon.buape.com) and TypeScript, Redirectomator helps you understand where your Discord server members are coming from by tracking invite sources and usage statistics.
+
+## ✨ Features
+
+- **📊 Invite Tracking** - Create and manage invite links with primary and secondary source tracking
+- **🔍 Detailed Analytics** - View usage statistics, top invites, and detailed invite information
+- **📝 Source Management** - Track where members come from (Instagram, Twitter, YouTube, etc.) and where on those platforms (Bio, Post, Story, etc.)
+- **📋 Logging System** - Optional logging channel for all invite actions (create, delete, user joins)
+- **⚡ Fast Autocomplete** - Optimized autocomplete with caching for quick command usage
+- **🎯 Smart Defaults** - Automatically uses your server's rules channel or first text channel for invites
+- **🔧 Easy Management** - Edit, delete, and lookup invites with intuitive commands
+
+## 🚀 Quick Start
+
+### Prerequisites
 
 - Node.js 18.0.0 or higher
-- A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
-- npm or yarn
+- A Discord bot token
+- Discord application with bot and applications.commands scopes
 
-## Setup
+### Installation
 
-1. **Clone or download this template**
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-url>
+   cd Redirectomator
+   ```
 
-2. **Install dependencies:**
+2. **Install dependencies**
    ```bash
    npm install
    ```
 
-3. **Configure your bot:**
-   - Copy `.env.example` to `.env`:
-     ```bash
-     cp .env.example .env
-     ```
-   - Edit `.env` and add your bot credentials:
-     ```
-     DISCORD_TOKEN=your_bot_token_here
-     CLIENT_ID=your_client_id_here
-     GUILD_ID=your_guild_id_here
-     ```
-
-4. **Get your Discord bot credentials:**
-   - Go to [Discord Developer Portal](https://discord.com/developers/applications)
-   - Create a new application or select an existing one
-   - Go to the "Bot" section and create a bot
-   - Copy the bot token to `DISCORD_TOKEN`
-   - Go to "General Information" and copy the Application ID to `CLIENT_ID`
-   - (Optional) Copy your server/guild ID to `GUILD_ID` for faster command deployment during development
-
-5. **Invite your bot to your server:**
-   - Go to "OAuth2" > "URL Generator"
-   - Select scopes: `bot` and `applications.commands`
-   - Select bot permissions as needed
-   - Copy and visit the generated URL to invite the bot
-
-6. **Deploy slash commands:**
-   ```bash
-   node src/deploy-commands.js
+3. **Configure environment variables**
+   Create a `.env` file in the root directory:
+   ```env
+   DISCORD_TOKEN=your_bot_token_here
+   CLIENT_ID=your_application_id_here
+   DISCORD_PUBLIC_KEY=your_public_key_here
+   BASE_URL=https://your-domain.com
+   DEPLOY_SECRET=your_secret_for_deploy_endpoint
+   PORT=3000
    ```
-   - If `GUILD_ID` is set, commands deploy to that guild (instant)
-   - If `GUILD_ID` is not set, commands deploy globally (may take up to 1 hour)
 
-7. **Start the bot:**
+4. **Build the project**
+   ```bash
+   npm run build
+   ```
+
+5. **Deploy commands**
+   ```bash
+   npm run deploy
+   ```
+
+6. **Start the bot**
    ```bash
    npm start
    ```
-   
-   Or for development with auto-reload:
-   ```bash
-   npm run dev
-   ```
 
-## Project Structure
+### Configuration
+
+- **`/setchannel`** - Set a log channel for invite actions
+  - `channel` - The channel to send logs to
+
+### Utility
+
+- **`/help`** - Display all available commands
+- **`/ping`** - Check bot latency
+
+## 🔧 Configuration
+
+### Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `DISCORD_TOKEN` | Your Discord bot token | Yes |
+| `CLIENT_ID` | Your Discord application ID | Yes |
+| `DISCORD_PUBLIC_KEY` | Your Discord application public key | Yes |
+| `BASE_URL` | Base URL for your bot (for interactions endpoint) | Yes |
+| `DEPLOY_SECRET` | Secret for the deploy endpoint | Yes |
+| `PORT` | Port for the HTTP server (default: 3000) | No |
+
+### Discord Bot Permissions
+
+Your bot needs the following permissions:
+- **Manage Server** - To create and manage invites
+- **View Channels** - To access channel information
+- **Send Messages** - To send command responses and logs
+- **Embed Links** - To send rich embeds
+- **Read Message History** - For logging functionality
+
+### Intents
+
+The bot requires the following Discord intents:
+- **Guilds** - Basic guild information
+- **Guild Messages** - Message content access
+- **Message Content** - To read message content
+- **Guild Members** - To track member joins
+
+## 🛠️ Development
+
+### Project Structure
 
 ```
-.
+Redirectomator/
 ├── src/
-│   ├── commands/          # Command files
-│   │   ├── ping.js        # Sample ping command
-│   │   ├── dev.js         # Developer command with info/stats
-│   │   └── help.js        # Help command
-│   ├── index.js           # Main bot file
-│   └── deploy-commands.js # Command deployment script
-├── .env.example           # Environment variables template
-├── .gitignore            # Git ignore file
-├── package.json          # Project dependencies
-└── README.md            # This file
+│   ├── commands/       # Command files
+│   ├── listeners/      # Event listeners
+│   ├── utils/          # Utility functions
+│   ├── database.ts     # Database operations
+│   └── index.ts        # Main entry point
+├── dist/               # Compiled JavaScript
+├── invites.db          # SQLite database (auto-created)
+└── package.json
 ```
 
-## Creating New Commands
+### Scripts
 
-1. Create a new file in `src/commands/` (e.g., `mycommand.js`)
-2. Export a default object with `data` and `execute` properties:
+- `npm run build` - Compile TypeScript to JavaScript
+- `npm start` - Start the bot (production)
+- `npm run dev` - Start the bot with watch mode (development)
+- `npm run deploy` - Deploy slash commands to Discord
 
-```javascript
-import { SlashCommandBuilder } from 'discord.js';
+### Database
 
-export default {
-    data: new SlashCommandBuilder()
-        .setName('mycommand')
-        .setDescription('My command description'),
-    async execute(interaction) {
-        await interaction.reply('Hello!');
-    },
-};
-```
+The bot uses SQLite (via `better-sqlite3`) to store:
+- Invite links and their metadata
+- Invite usage statistics
+- Log channel configurations
 
-3. Restart the bot (or use `npm run dev` for auto-reload)
-4. Redeploy commands: `node src/deploy-commands.js`
+The database file (`invites.db`) is automatically created on first run.
 
-## Troubleshooting
+## 🏗️ Architecture
 
-- **Bot doesn't respond to commands:** Make sure you've deployed commands using `node src/deploy-commands.js`
-- **"Missing Permissions" error:** Check that the bot has the necessary permissions in your server
-- **Commands not showing up:** Wait a few minutes after deployment, or restart Discord
+Redirectomator is built with:
 
-## License
+- **[Carbon Framework](https://carbon.buape.com)** - Modern Discord bot framework
+- **TypeScript** - Type-safe development
+- **Gateway Plugin** - Real-time Discord events via WebSocket
+- **SQLite** - Lightweight, local database
+- **ESM** - Modern JavaScript modules
 
-MIT
+### How It Works
+
+1. **Command Handling** - Carbon automatically handles slash command interactions
+2. **Event Listeners** - Gateway plugin receives real-time events (member joins, invite creates/deletes)
+3. **Database Tracking** - All invite data is stored locally in SQLite
+4. **Caching** - Autocomplete uses intelligent caching for fast responses
+5. **Logging** - Optional logging system tracks all invite-related actions
+
+## 📊 Performance Optimizations
+
+- **Autocomplete Caching** - Invite lists are cached for 30 seconds to reduce database queries
+- **Smart Filtering** - Scoring-based filtering prioritizes relevant results
+- **Efficient Queries** - Optimized database queries for fast lookups
+- **Pre-loaded Sources** - Source lists are pre-loaded for instant autocomplete
+
+## 🔒 Security
+
+- Environment variables for sensitive data
+- Secret-protected deploy endpoint
+- Input validation on all commands
+- SQL injection protection via parameterized queries
+
+## 📝 License
+
+MIT License - see LICENSE file for details
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📞 Support
+
+For issues, questions, or feature requests, please open an issue on GitHub.
+
+---
+
+**Made with ❤️ using [Carbon](https://carbon.buape.com)**
 
