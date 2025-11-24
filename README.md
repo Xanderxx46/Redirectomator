@@ -59,16 +59,6 @@ A powerful Discord bot for tracking and managing invite links with detailed anal
    npm start
    ```
 
-### Configuration
-
-- **`/setchannel`** - Set a log channel for invite actions
-  - `channel` - The channel to send logs to
-
-### Utility
-
-- **`/help`** - Display all available commands
-- **`/ping`** - Check bot latency
-
 ## 🔧 Configuration
 
 ### Environment Variables
