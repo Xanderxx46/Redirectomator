@@ -109,7 +109,7 @@ export default class DevCommand extends Command {
             const ping = (client as any).ws?.ping || 0;
             const memoryUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
 
-            const statsEmbed: any = {
+            const statsEmbed = new Embed({
                 color: 0x5865F2,
                 title: '📊 Bot Statistics',
                 fields: [
@@ -121,7 +121,7 @@ export default class DevCommand extends Command {
                     { name: 'Commands Loaded', value: `${commandCount}`, inline: true }
                 ],
                 timestamp: new Date().toISOString()
-            };
+            });
 
             await interaction.reply({ embeds: [statsEmbed], ephemeral: true });
         }
