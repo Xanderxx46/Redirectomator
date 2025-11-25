@@ -9,17 +9,31 @@ export default class LookupCommand extends Command {
     options = [
         {
             name: 'code',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'The invite code to lookup (e.g., 8eqeQmTtKY)',
             required: true,
             autocomplete: true
         }
-    ] as any;
+    ]
 
     async autocomplete(interaction: AutocompleteInteraction) {
-        const focused = interaction.options.getFocused();
-        const focusedValue = String(focused?.value || '');
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        const focusedOption = interaction.options.getFocused();
+        const focusedValue = String(focusedOption?.value || '');
+        
+        // Get guild ID from interaction - check if it exists as a property
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+        
+        if (!guildId) {
+            return interaction.respond([{
+                name: 'This command can only be used in a server',
+                value: 'no_guild'
+            }]);
+        }
         
         // Use cached invites for faster response
         const invites = getCachedInvites(guildId, () => dbOperations.getInvitesByGuild(guildId));

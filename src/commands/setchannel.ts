@@ -8,22 +8,34 @@ export default class SetChannelCommand extends Command {
     options = [
         {
             name: 'channel',
-            type: ApplicationCommandOptionType.Channel,
+            type: ApplicationCommandOptionType.Channel as const,
             description: 'The channel to send logs to',
             required: true
         }
-    ] as any;
+    ]
 
     async run(interaction: CommandInteraction) {
-        const client = (interaction as any).client;
+        if (!('client' in interaction) || !interaction.client || !('rest' in interaction.client) || typeof interaction.client.rest !== 'object' || !interaction.client.rest || !('get' in interaction.client.rest)) {
+            return interaction.reply({ 
+                content: '❌ Client not available.' 
+            });
+        }
+
+        const client = interaction.client;
         
         // Extract channel ID from raw interaction data first (most reliable)
-        const interactionData = (interaction as any).data || (interaction as any).rawData;
+        let interactionData: { options?: Array<{ name: string; value?: unknown }> } | null = null;
+        if ('data' in interaction && interaction.data && typeof interaction.data === 'object') {
+            interactionData = interaction.data as { options?: Array<{ name: string; value?: unknown }> };
+        } else if ('rawData' in interaction && interaction.rawData && typeof interaction.rawData === 'object') {
+            interactionData = interaction.rawData as { options?: Array<{ name: string; value?: unknown }> };
+        }
+
         let channelId: string | null = null;
         
         if (interactionData?.options) {
-            const channelOption = interactionData.options.find((opt: any) => opt.name === 'channel');
-            if (channelOption?.value) {
+            const channelOption = interactionData.options.find((opt) => opt.name === 'channel');
+            if (channelOption && 'value' in channelOption && channelOption.value) {
                 channelId = String(channelOption.value);
             }
         }
@@ -31,11 +43,12 @@ export default class SetChannelCommand extends Command {
         // If we got the channel ID from interaction data, use it
         // Otherwise, try to get it from the channel object (which might be a Promise)
         if (!channelId) {
-            let channel = interaction.options.getChannel('channel');
+            const channelResult = interaction.options.getChannel('channel');
+            let channel: unknown = channelResult;
             
             // Handle Promise if getChannel returns one
-            if (channel && typeof (channel as any).then === 'function') {
-                channel = await (channel as any);
+            if (channel && typeof channel === 'object' && channel !== null && 'then' in channel && typeof channel.then === 'function') {
+                channel = await (channel as Promise<unknown>);
             }
             
             if (!channel) {
@@ -47,34 +60,40 @@ export default class SetChannelCommand extends Command {
             // Extract ID from channel object
             if (typeof channel === 'string') {
                 channelId = channel;
-            } else if ((channel as any)?.id) {
-                channelId = String((channel as any).id);
-            } else if ((channel as any)?.value) {
-                channelId = String((channel as any).value);
+            } else if (typeof channel === 'object' && channel !== null && 'id' in channel) {
+                channelId = String(channel.id);
+            } else if (typeof channel === 'object' && channel !== null && 'value' in channel) {
+                channelId = String(channel.value);
             }
         }
 
         // If still no channel ID, log for debugging
         if (!channelId) {
             console.error('Could not extract channel ID.');
-            console.error('Interaction data:', JSON.stringify(interactionData, null, 2));
             return interaction.reply({ 
                 content: '❌ Could not determine channel ID. Please try again or contact support.'
             });
         }
 
         // Fetch full channel data to verify type
-        let channelData: any;
+        interface ChannelData {
+            type: number;
+        }
+
+        let channelData: ChannelData | null = null;
         try {
-            channelData = await client.rest.get(`/channels/${channelId}`) as any;
-        } catch (error: any) {
+            const fetchedChannel = await client.rest.get(`/channels/${channelId}`);
+            if (fetchedChannel && typeof fetchedChannel === 'object' && 'type' in fetchedChannel) {
+                channelData = fetchedChannel as ChannelData;
+            }
+        } catch (error) {
             console.error('Error fetching channel:', error);
-            // Provide more helpful error message
-            if (error.status === 404) {
+            const errorObj = error && typeof error === 'object' && 'status' in error ? error as { status?: number } : null;
+            if (errorObj?.status === 404) {
                 return interaction.reply({ 
                     content: '❌ Channel not found. Make sure the channel exists and the bot has access to it.'
                 });
-            } else if (error.status === 403) {
+            } else if (errorObj?.status === 403) {
                 return interaction.reply({ 
                     content: '❌ Bot does not have permission to access this channel.'
                 });
@@ -84,25 +103,34 @@ export default class SetChannelCommand extends Command {
             });
         }
 
+        if (!channelData) {
+            return interaction.reply({ 
+                content: '❌ Could not fetch channel data.'
+            });
+        }
+
         // Check if channel is a text channel
         const channelType = channelData.type;
-        if (channelType !== 0 && channelType !== 5 && channelType !== 15) { // Not a text channel
+        if (channelType !== 0 && channelType !== 5 && channelType !== 15) {
             return interaction.reply({ 
                 content: '❌ Please select a text channel.'
             });
         }
-        try {
-            // Try to get channel permissions
-            const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
-            const botMember = await client.rest.get(`/guilds/${guildId}/members/${client.user?.id || (await client.rest.get('/users/@me') as any).id}`) as any;
-            // Note: Permission checking might need additional API calls
-            // For now, we'll just try to set it and let Discord handle permission errors
-        } catch (error) {
-            // Continue anyway
+
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+
+        if (!guildId) {
+            return interaction.reply({ 
+                content: '❌ This command can only be used in a server.'
+            });
         }
 
         try {
-            const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
             dbOperations.setLogChannel(guildId, channelId, 'ALL');
 
             const embed = new Embed({

@@ -10,38 +10,38 @@ export default class EditCommand extends Command {
     options = [
         {
             name: 'code',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'The invite code to edit',
             required: true,
             autocomplete: true
         },
         {
             name: 'primary_source',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'New primary source (optional)',
             required: false,
             autocomplete: true
         },
         {
             name: 'secondary_source',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'New secondary source (optional)',
             required: false,
             autocomplete: true
         },
         {
             name: 'description',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'New description (optional, use "none" to remove)',
             required: false
         },
         {
             name: 'max_uses',
-            type: ApplicationCommandOptionType.Integer,
+            type: ApplicationCommandOptionType.Integer as const,
             description: 'New max uses (optional, use 0 to remove limit)',
             required: false
         }
-    ] as any;
+    ]
 
     async autocomplete(interaction: AutocompleteInteraction) {
         const focusedOption = interaction.options.getFocused();
@@ -50,7 +50,20 @@ export default class EditCommand extends Command {
         const focusedName = focusedOption.name;
 
         if (focusedName === 'code') {
-            const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+            // Get guild ID from interaction - check if it exists as a property
+            let guildId: string | null = null;
+            if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+                guildId = interaction.guild_id;
+            } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+                guildId = String(interaction.guild.id);
+            }
+            
+            if (!guildId) {
+                return interaction.respond([{
+                    name: 'This command can only be used in a server',
+                    value: 'no_guild'
+                }]);
+            }
             
             // Use cached invites for faster response
             const invites = getCachedInvites(guildId, () => dbOperations.getInvitesByGuild(guildId));
@@ -120,7 +133,18 @@ export default class EditCommand extends Command {
             });
         }
 
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+
+        if (!guildId) {
+            return interaction.reply({ 
+                content: '❌ This command can only be used in a server.'
+            });
+        }
 
         // Check if user has permission (must be in same guild)
         if (invite.guild_id !== guildId) {
@@ -137,7 +161,7 @@ export default class EditCommand extends Command {
         }
 
         try {
-            const updates: any = {};
+            const updates: { primarySource?: string; secondarySource?: string; description?: string | null; maxUses?: number | null } = {};
             if (primarySource) updates.primarySource = primarySource;
             if (secondarySource) updates.secondarySource = secondarySource;
             if (description !== null) {
@@ -158,39 +182,52 @@ export default class EditCommand extends Command {
             // Invalidate autocomplete cache
             invalidateInviteCache(guildId);
 
-            const embedData: any = {
+            const fields = [
+                { name: 'Primary Source', value: updatedInvite.primary_source, inline: true },
+                { name: 'Secondary Source', value: updatedInvite.secondary_source, inline: true },
+                { name: 'Channel', value: `<#${updatedInvite.channel_id}>`, inline: true },
+                { name: 'Total Uses', value: `${updatedInvite.uses}`, inline: true },
+                { name: 'Max Uses', value: updatedInvite.max_uses ? `${updatedInvite.max_uses}` : 'Unlimited', inline: true }
+            ];
+
+            if (updatedInvite.description) {
+                fields.push({ name: 'Description', value: updatedInvite.description, inline: false });
+            }
+
+            const embed = new Embed({
                 color: 0x5865F2,
                 title: '✅ Invite Updated',
                 description: `Successfully updated invite \`.gg/${invite.code}\``,
-                fields: [
-                    { name: 'Primary Source', value: updatedInvite.primary_source, inline: true },
-                    { name: 'Secondary Source', value: updatedInvite.secondary_source, inline: true },
-                    { name: 'Channel', value: `<#${updatedInvite.channel_id}>`, inline: true },
-                    { name: 'Total Uses', value: `${updatedInvite.uses}`, inline: true },
-                    { name: 'Max Uses', value: updatedInvite.max_uses ? `${updatedInvite.max_uses}` : 'Unlimited', inline: true }
-                ],
+                fields: fields,
                 timestamp: new Date().toISOString()
-            };
-
-            if (updatedInvite.description) {
-                embedData.fields.push({ name: 'Description', value: updatedInvite.description, inline: false });
-            }
-
-            const embed = new Embed(embedData);
+            });
 
             await interaction.reply({ embeds: [embed] });
 
             // Log the edit
-            const client = (interaction as any).client;
-            const guild = await client.rest.get(`/guilds/${guildId}`) as any;
-            await logInviteAction(client, guild, 'created', {
-                code: updatedInvite.code,
-                channelId: updatedInvite.channel_id,
-                primarySource: updatedInvite.primary_source,
-                secondarySource: updatedInvite.secondary_source,
-                description: updatedInvite.description || undefined,
-                createdBy: `<@${(interaction as any).user?.id || (interaction as any).member?.user?.id}> (edited)`,
-            });
+            if ('client' in interaction && interaction.client && 'rest' in interaction.client && typeof interaction.client.rest === 'object' && interaction.client.rest !== null && 'get' in interaction.client.rest) {
+                const client = interaction.client;
+                const guild = await client.rest.get(`/guilds/${guildId}`);
+                
+                let userId: string | null = null;
+                if ('user' in interaction && interaction.user && typeof interaction.user === 'object' && 'id' in interaction.user) {
+                    userId = String(interaction.user.id);
+                } else if ('member' in interaction && interaction.member && typeof interaction.member === 'object') {
+                    const member = interaction.member;
+                    if ('user' in member && member.user && typeof member.user === 'object' && 'id' in member.user) {
+                        userId = String(member.user.id);
+                    }
+                }
+
+                await logInviteAction(client, guild, 'created', {
+                    code: updatedInvite.code,
+                    channelId: updatedInvite.channel_id,
+                    primarySource: updatedInvite.primary_source,
+                    secondarySource: updatedInvite.secondary_source,
+                    description: updatedInvite.description || undefined,
+                    createdBy: userId ? `<@${userId}> (edited)` : 'Unknown (edited)',
+                });
+            }
         } catch (error) {
             console.error('Error editing invite:', error);
             await interaction.reply({ 

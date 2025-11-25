@@ -10,38 +10,38 @@ export default class CreateCommand extends Command {
     options = [
         {
             name: 'primary_source',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'Primary source (e.g., Instagram, Twitter, YouTube)',
             required: true,
             autocomplete: true
         },
         {
             name: 'secondary_source',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'Secondary source (e.g., Bio, Post, Story)',
             required: true,
             autocomplete: true
         },
         {
             name: 'channel',
-            type: ApplicationCommandOptionType.Channel,
+            type: ApplicationCommandOptionType.Channel as const,
             description: 'The channel to create the invite for',
             required: false
         },
         {
             name: 'description',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'Optional description for this invite',
             required: false
         },
         {
             name: 'max_uses',
-            type: ApplicationCommandOptionType.Integer,
+            type: ApplicationCommandOptionType.Integer as const,
             description: 'Maximum number of uses (optional)',
             required: false
         }
-    ] as any;
-
+    ]
+    
     async autocomplete(interaction: AutocompleteInteraction) {
         const focusedOption = interaction.options.getFocused();
         const focusedValue = String(focusedOption?.value || '').toLowerCase();
@@ -85,8 +85,19 @@ export default class CreateCommand extends Command {
             });
         }
 
-        const client = (interaction as any).client;
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        if (!('client' in interaction) || !interaction.client || !('rest' in interaction.client) || typeof interaction.client.rest !== 'object' || !interaction.client.rest || !('get' in interaction.client.rest) || !('post' in interaction.client.rest)) {
+            return interaction.reply({ 
+                content: '❌ Client not available.' 
+            });
+        }
+
+        const client = interaction.client;
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
         
         if (!guildId) {
             return interaction.reply({ 
@@ -95,26 +106,32 @@ export default class CreateCommand extends Command {
         }
 
         // Get channel - use provided channel or default to rules channel (or first channel)
-        let targetChannel: any = null;
+        interface ChannelData {
+            id: string;
+            name?: string;
+            type: number;
+        }
+
+        let targetChannel: ChannelData | null = null;
         let channelId: string;
         
         // Check if channel was actually provided
-        // Carbon's getChannel returns null/undefined when option is not provided
-        // But we also need to check if it's a valid channel object with an id
-        if (channel && (typeof channel === 'string' || (channel as any).id)) {
-            // Channel was provided - extract ID and fetch full channel data
+        if (channel) {
             if (typeof channel === 'string') {
                 channelId = channel;
+            } else if (typeof channel === 'object' && channel !== null && 'id' in channel) {
+                channelId = String(channel.id);
             } else {
-                channelId = String((channel as any).id);
+                channelId = '';
             }
             
-            // Only try to fetch if we have a valid channel ID
             if (channelId && channelId !== 'undefined' && channelId !== 'null') {
                 try {
-                    targetChannel = await client.rest.get(`/channels/${channelId}`) as any;
+                    const fetchedChannel = await client.rest.get(`/channels/${channelId}`);
+                    if (fetchedChannel && typeof fetchedChannel === 'object' && 'id' in fetchedChannel && 'type' in fetchedChannel) {
+                        targetChannel = fetchedChannel as ChannelData;
+                    }
                 } catch (error) {
-                    // If we can't access the channel, fall through to default logic
                     console.error('Could not access selected channel:', error);
                     targetChannel = null;
                 }
@@ -123,26 +140,33 @@ export default class CreateCommand extends Command {
         
         if (!targetChannel) {
             try {
-                // Get guild to check for rules channel
-                const guild = await client.rest.get(`/guilds/${guildId}`) as any;
+                const guild = await client.rest.get(`/guilds/${guildId}`);
                 
-                // Try to use the rules channel (Discord community rules channel)
-                if (guild.rules_channel_id) {
+                if (guild && typeof guild === 'object' && 'rules_channel_id' in guild && guild.rules_channel_id) {
                     try {
-                        targetChannel = await client.rest.get(`/channels/${guild.rules_channel_id}`) as any;
+                        const rulesChannel = await client.rest.get(`/channels/${guild.rules_channel_id}`);
+                        if (rulesChannel && typeof rulesChannel === 'object' && 'id' in rulesChannel && 'type' in rulesChannel) {
+                            targetChannel = rulesChannel as ChannelData;
+                        }
                     } catch (error) {
-                        // Rules channel might not be accessible, fall through to first channel
+                        // Rules channel might not be accessible
                     }
                 }
 
-                // If no rules channel found, get the first text channel
                 if (!targetChannel) {
-                    const channels = await client.rest.get(`/guilds/${guildId}/channels`) as any[];
+                    const channels = await client.rest.get(`/guilds/${guildId}/channels`);
                     
-                    // Find the first text channel (type 0 = text, 5 = news, 15 = forum)
-                    targetChannel = channels.find((ch: any) => 
-                        ch.type === 0 || ch.type === 5 || ch.type === 15
-                    );
+                    if (Array.isArray(channels)) {
+                        for (const ch of channels) {
+                            if (ch && typeof ch === 'object' && 'type' in ch && 'id' in ch) {
+                                const channelType = typeof ch.type === 'number' ? ch.type : 0;
+                                if (channelType === 0 || channelType === 5 || channelType === 15) {
+                                    targetChannel = ch as ChannelData;
+                                    break;
+                                }
+                            }
+                        }
+                    }
 
                     if (!targetChannel) {
                         return interaction.reply({ 
@@ -158,9 +182,8 @@ export default class CreateCommand extends Command {
             }
         }
 
-        // Check if channel is a text channel
         const channelType = targetChannel.type;
-        if (channelType !== 0 && channelType !== 5 && channelType !== 15) { // Not a text channel
+        if (channelType !== 0 && channelType !== 5 && channelType !== 15) {
             return interaction.reply({ 
                 content: '❌ Please select a text channel.' 
             });
@@ -171,16 +194,30 @@ export default class CreateCommand extends Command {
         try {
 
             // Create the invite (never expires)
-            const invite = await client.rest.post(`/channels/${channelId}/invites`, {
+            const inviteResponse = await client.rest.post(`/channels/${channelId}/invites`, {
                 body: {
                     max_age: 0, // Never expires
                     max_uses: maxUses || 0,
                     unique: true
                 }
-            }) as any;
+            });
 
-            // Get channel name
-            const channelName = (targetChannel as any).name || 'Unknown';
+            if (!inviteResponse || typeof inviteResponse !== 'object' || !('code' in inviteResponse)) {
+                throw new Error('Invalid invite response');
+            }
+
+            const invite = inviteResponse as { code: string };
+            const channelName = targetChannel.name || 'Unknown';
+
+            let createdByUserId = '';
+            if ('user' in interaction && interaction.user && typeof interaction.user === 'object' && 'id' in interaction.user) {
+                createdByUserId = String(interaction.user.id);
+            } else if ('member' in interaction && interaction.member && typeof interaction.member === 'object') {
+                const member = interaction.member;
+                if ('user' in member && member.user && typeof member.user === 'object' && 'id' in member.user) {
+                    createdByUserId = String(member.user.id);
+                }
+            }
 
             // Store in database
             dbOperations.createInvite({
@@ -192,7 +229,7 @@ export default class CreateCommand extends Command {
                 secondarySource,
                 description: description || null,
                 maxUses: maxUses || null,
-                createdBy: (interaction as any).user?.id || (interaction as any).member?.user?.id || '',
+                createdBy: createdByUserId,
             });
 
             // Invalidate autocomplete cache
@@ -201,9 +238,10 @@ export default class CreateCommand extends Command {
             // Get total invite count for this guild
             const totalInvites = dbOperations.getInviteCount(guildId);
 
-            const embedData: any = {
+            const embed = new Embed({
                 color: 0x5865F2,
                 title: '✅ Invite Created!',
+                description: description || undefined,
                 fields: [
                     { name: 'Invite Link', value: `https://discord.gg/${invite.code}`, inline: false },
                     { name: 'Primary Source', value: primarySource, inline: true },
@@ -212,13 +250,7 @@ export default class CreateCommand extends Command {
                 ],
                 timestamp: new Date().toISOString(),
                 footer: { text: `${totalInvites} total links` }
-            };
-
-            if (description) {
-                embedData.description = description;
-            }
-
-            const embed = new Embed(embedData);
+            });
 
             await interaction.reply({ 
                 embeds: [embed],
@@ -226,14 +258,23 @@ export default class CreateCommand extends Command {
             });
 
             // Log the invite creation
-            const guild = await client.rest.get(`/guilds/${guildId}`) as any;
+            const guild = await client.rest.get(`/guilds/${guildId}`);
+            let logUserId: string | null = null;
+            if ('user' in interaction && interaction.user && typeof interaction.user === 'object' && 'id' in interaction.user) {
+                logUserId = String(interaction.user.id);
+            } else if ('member' in interaction && interaction.member && typeof interaction.member === 'object') {
+                const member = interaction.member;
+                if ('user' in member && member.user && typeof member.user === 'object' && 'id' in member.user) {
+                    logUserId = String(member.user.id);
+                }
+            }
             await logInviteAction(client, guild, 'created', {
                 code: invite.code,
                 channelId: channelId,
                 primarySource,
                 secondarySource,
                 description,
-                createdBy: `<@${(interaction as any).user?.id || (interaction as any).member?.user?.id}>`,
+                createdBy: logUserId ? `<@${logUserId}>` : 'Unknown',
             });
         } catch (error) {
             console.error('Error creating invite:', error);

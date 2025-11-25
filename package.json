@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch & node --watch dist/index.js",
-    "deploy": "tsc && node dist/deploy-commands.js"
+    "deploy": "tsc && node dist/deploy-commands.js",
+    "typeCheck": "tsc --noEmit"
   },
   "keywords": [
     "discord",
@@ -20,7 +21,9 @@
   "dependencies": {
     "@buape/carbon": "^0.13.0",
     "better-sqlite3": "^9.2.2",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "drizzle-kit": "^0.31.7",
+    "drizzle-orm": "^0.44.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",

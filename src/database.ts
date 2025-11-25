@@ -1,18 +1,22 @@
-import Database, { type Database as DatabaseType } from 'better-sqlite3';
+import { db } from './db/index.js';
+import { invites, inviteUses, logChannels } from './db/schema.js';
+import { eq, desc, sql, count } from 'drizzle-orm';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import Database, { type Database as DatabaseType } from 'better-sqlite3';
+
+// Get the underlying database connection for raw SQL
+const getRawDb = (): DatabaseType => (db as any).$client;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Initialize database
-const db: DatabaseType = new Database(join(__dirname, '..', 'invites.db'));
+// Initialize database connection for migrations/setup
+const sqlite = new Database(join(__dirname, '..', 'invites.db'));
+sqlite.pragma('foreign_keys = ON');
 
-// Enable foreign keys
-db.pragma('foreign_keys = ON');
-
-// Create tables if they don't exist
-db.exec(`
+// Create tables if they don't exist (for initial setup)
+sqlite.exec(`
     CREATE TABLE IF NOT EXISTS invites (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT NOT NULL UNIQUE,
@@ -67,6 +71,7 @@ interface InviteUpdate {
     maxUses?: number | null;
 }
 
+// Legacy interface for backward compatibility
 interface Invite {
     id: number;
     code: string;
@@ -82,47 +87,73 @@ interface Invite {
     created_by: string;
 }
 
+// Helper function to convert Drizzle invite to legacy format
+function toLegacyInvite(invite: typeof invites.$inferSelect): Invite {
+    return {
+        id: invite.id,
+        code: invite.code,
+        guild_id: invite.guildId,
+        channel_id: invite.channelId,
+        channel_name: invite.channelName,
+        primary_source: invite.primarySource,
+        secondary_source: invite.secondarySource,
+        description: invite.description,
+        uses: invite.uses,
+        max_uses: invite.maxUses,
+        created_at: invite.createdAt,
+        created_by: invite.createdBy
+    };
+}
+
 // Database operations
 export const dbOperations = {
     // Create a new invite
     createInvite(data: InviteData) {
-        const stmt = db.prepare(`
-            INSERT INTO invites (code, guild_id, channel_id, channel_name, primary_source, secondary_source, description, max_uses, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        
-        return stmt.run(
-            data.code,
-            data.guildId,
-            data.channelId,
-            data.channelName,
-            data.primarySource,
-            data.secondarySource,
-            data.description || null,
-            data.maxUses || null,
-            Date.now(),
-            data.createdBy
-        );
+        const result = db.insert(invites).values({
+            code: data.code,
+            guildId: data.guildId,
+            channelId: data.channelId,
+            channelName: data.channelName,
+            primarySource: data.primarySource,
+            secondarySource: data.secondarySource,
+            description: data.description || null,
+            maxUses: data.maxUses || null,
+            createdAt: Date.now(),
+            createdBy: data.createdBy
+        }).returning().get();
+
+        return {
+            lastInsertRowid: result.id,
+            changes: 1
+        };
     },
 
     // Get all invites for a guild
     getInvitesByGuild(guildId: string): Invite[] {
-        const stmt = db.prepare(`
-            SELECT * FROM invites WHERE guild_id = ? ORDER BY created_at DESC
-        `);
-        return stmt.all(guildId) as Invite[];
+        const results = db.select().from(invites)
+            .where(eq(invites.guildId, guildId))
+            .orderBy(desc(invites.createdAt))
+            .all();
+
+        return results.map(toLegacyInvite);
     },
 
     // Get invite by code
     getInviteByCode(code: string): Invite | undefined {
-        const stmt = db.prepare('SELECT * FROM invites WHERE code = ?');
-        return stmt.get(code) as Invite | undefined;
+        const result = db.select().from(invites)
+            .where(eq(invites.code, code))
+            .get();
+
+        return result ? toLegacyInvite(result) : undefined;
     },
 
     // Get invite by ID
     getInviteById(id: number): Invite | undefined {
-        const stmt = db.prepare('SELECT * FROM invites WHERE id = ?');
-        return stmt.get(id) as Invite | undefined;
+        const result = db.select().from(invites)
+            .where(eq(invites.id, id))
+            .get();
+
+        return result ? toLegacyInvite(result) : undefined;
     },
 
     // Increment invite uses
@@ -135,126 +166,179 @@ export const dbOperations = {
             return null;
         }
 
-        // Update uses count
-        const updateStmt = db.prepare('UPDATE invites SET uses = uses + 1 WHERE id = ?');
-        updateStmt.run(inviteId);
+        // Update uses count - use raw SQL for increment
+        const rawDb = getRawDb();
+        rawDb.prepare('UPDATE invites SET uses = uses + 1 WHERE id = ?').run(inviteId);
 
         // Log the use
-        const logStmt = db.prepare(`
-            INSERT INTO invite_uses (invite_id, user_id, username, used_at)
-            VALUES (?, ?, ?, ?)
-        `);
-        logStmt.run(inviteId, userId, username, Date.now());
+        db.insert(inviteUses).values({
+            inviteId: inviteId,
+            userId: userId,
+            username: username,
+            usedAt: Date.now()
+        }).run();
 
         return this.getInviteById(inviteId) || null;
     },
 
     // Get invite usage stats
     getInviteStats(inviteId: number) {
-        const stmt = db.prepare(`
-            SELECT 
-                i.*,
-                COUNT(iu.id) as total_uses,
-                COUNT(DISTINCT DATE(iu.used_at / 86400000)) as unique_days
-            FROM invites i
-            LEFT JOIN invite_uses iu ON i.id = iu.invite_id
-            WHERE i.id = ?
-            GROUP BY i.id
-        `);
-        return stmt.get(inviteId);
+        const result = db.select({
+            id: invites.id,
+            code: invites.code,
+            guildId: invites.guildId,
+            channelId: invites.channelId,
+            channelName: invites.channelName,
+            primarySource: invites.primarySource,
+            secondarySource: invites.secondarySource,
+            description: invites.description,
+            uses: invites.uses,
+            maxUses: invites.maxUses,
+            createdAt: invites.createdAt,
+            createdBy: invites.createdBy,
+            totalUses: sql<number>`COUNT(${inviteUses.id})`.as('total_uses'),
+            uniqueDays: sql<number>`COUNT(DISTINCT CAST(${inviteUses.usedAt} / 86400000 AS INTEGER))`.as('unique_days')
+        })
+        .from(invites)
+        .leftJoin(inviteUses, eq(invites.id, inviteUses.inviteId))
+        .where(eq(invites.id, inviteId))
+        .groupBy(invites.id)
+        .get();
+
+        if (!result) return null;
+
+        return {
+            ...toLegacyInvite(result as any),
+            total_uses: Number(result.totalUses) || 0,
+            unique_days: Number(result.uniqueDays) || 0
+        };
     },
 
     // Get recent uses for an invite
     getRecentUses(inviteId: number, limit = 10) {
-        const stmt = db.prepare(`
-            SELECT * FROM invite_uses 
-            WHERE invite_id = ? 
-            ORDER BY used_at DESC 
-            LIMIT ?
-        `);
-        return stmt.all(inviteId, limit);
+        return db.select().from(inviteUses)
+            .where(eq(inviteUses.inviteId, inviteId))
+            .orderBy(desc(inviteUses.usedAt))
+            .limit(limit)
+            .all();
     },
 
     // Delete an invite
     deleteInvite(id: number) {
-        const stmt = db.prepare('DELETE FROM invites WHERE id = ?');
-        return stmt.run(id);
+        const result = db.delete(invites)
+            .where(eq(invites.id, id))
+            .returning()
+            .get();
+
+        return {
+            lastInsertRowid: result?.id || 0,
+            changes: result ? 1 : 0
+        };
     },
 
     // Get total invite count for a guild
     getInviteCount(guildId: string): number {
-        const stmt = db.prepare('SELECT COUNT(*) as count FROM invites WHERE guild_id = ?');
-        const result = stmt.get(guildId) as { count: number };
-        return result.count;
+        const result = db.select({ count: count() })
+            .from(invites)
+            .where(eq(invites.guildId, guildId))
+            .get();
+
+        return result?.count || 0;
     },
 
     // Update invite information
     updateInvite(id: number, updates: InviteUpdate): Invite | null {
-        const fields: string[] = [];
-        const values: any[] = [];
+        const updateData: Partial<typeof invites.$inferInsert> = {};
 
         if (updates.primarySource !== undefined) {
-            fields.push('primary_source = ?');
-            values.push(updates.primarySource);
+            updateData.primarySource = updates.primarySource;
         }
         if (updates.secondarySource !== undefined) {
-            fields.push('secondary_source = ?');
-            values.push(updates.secondarySource);
+            updateData.secondarySource = updates.secondarySource;
         }
         if (updates.description !== undefined) {
-            fields.push('description = ?');
-            values.push(updates.description || null);
+            updateData.description = updates.description || null;
         }
         if (updates.maxUses !== undefined) {
-            fields.push('max_uses = ?');
-            values.push(updates.maxUses || null);
+            updateData.maxUses = updates.maxUses || null;
         }
 
-        if (fields.length === 0) {
+        if (Object.keys(updateData).length === 0) {
             return null;
         }
 
-        values.push(id);
-        const stmt = db.prepare(`UPDATE invites SET ${fields.join(', ')} WHERE id = ?`);
-        stmt.run(...values);
+        const result = db.update(invites)
+            .set(updateData)
+            .where(eq(invites.id, id))
+            .returning()
+            .get();
 
-        return this.getInviteById(id) || null;
+        return result ? toLegacyInvite(result) : null;
     },
 
     // Get top invites by usage for a guild
     getTopInvites(guildId: string, limit = 10): Invite[] {
-        const stmt = db.prepare(`
-            SELECT * FROM invites 
-            WHERE guild_id = ? 
-            ORDER BY uses DESC 
-            LIMIT ?
-        `);
-        return stmt.all(guildId, limit) as Invite[];
+        const results = db.select().from(invites)
+            .where(eq(invites.guildId, guildId))
+            .orderBy(desc(invites.uses))
+            .limit(limit)
+            .all();
+
+        return results.map(toLegacyInvite);
     },
 
     // Set log channel for a guild
     setLogChannel(guildId: string, channelId: string, logTypes = 'ALL') {
-        const stmt = db.prepare(`
-            INSERT INTO log_channels (guild_id, channel_id, log_types)
-            VALUES (?, ?, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?, log_types = ?
-        `);
-        return stmt.run(guildId, channelId, logTypes, channelId, logTypes);
+        db.insert(logChannels)
+            .values({
+                guildId: guildId,
+                channelId: channelId,
+                logTypes: logTypes
+            })
+            .onConflictDoUpdate({
+                target: logChannels.guildId,
+                set: {
+                    channelId: channelId,
+                    logTypes: logTypes
+                }
+            })
+            .run();
+
+        return {
+            lastInsertRowid: 0,
+            changes: 1
+        };
     },
 
     // Get log channel for a guild
     getLogChannel(guildId: string) {
-        const stmt = db.prepare('SELECT * FROM log_channels WHERE guild_id = ?');
-        return stmt.get(guildId);
+        const result = db.select().from(logChannels)
+            .where(eq(logChannels.guildId, guildId))
+            .get();
+
+        if (!result) return undefined;
+
+        // Convert to legacy format
+        return {
+            guild_id: result.guildId,
+            channel_id: result.channelId,
+            log_types: result.logTypes
+        };
     },
 
     // Remove log channel for a guild
     removeLogChannel(guildId: string) {
-        const stmt = db.prepare('DELETE FROM log_channels WHERE guild_id = ?');
-        return stmt.run(guildId);
+        const result = db.delete(logChannels)
+            .where(eq(logChannels.guildId, guildId))
+            .returning()
+            .get();
+
+        return {
+            lastInsertRowid: 0,
+            changes: result ? 1 : 0
+        };
     }
 };
 
 export default db;
 export type { Invite, InviteData, InviteUpdate };
-

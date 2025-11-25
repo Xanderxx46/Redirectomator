@@ -1,7 +1,6 @@
 import {
-    type Client,
     GuildMemberAddListener,
-    type ListenerEventAdditionalData
+    ListenerEventData
 } from "@buape/carbon";
 import { dbOperations } from '../database.js';
 import { logInviteAction } from '../utils/logger.js';
@@ -9,43 +8,64 @@ import { inviteCache } from './ready.js';
 
 export class GuildMemberAdd extends GuildMemberAddListener {
     async handle(
-        data: ListenerEventAdditionalData,
-        client: Client
+        data: ListenerEventData[this["type"]],
+        client: Parameters<GuildMemberAddListener["handle"]>[1]
     ) {
-        const memberData = data as any;
         try {
-            if (!memberData.guild_id || !memberData.user) return;
+            if (!data.guild_id || !data.user) return;
+            
+            const guildId = typeof data.guild_id === 'string' ? data.guild_id : String(data.guild_id);
+            
+            if (!client || typeof client !== 'object' || !('rest' in client) || typeof client.rest !== 'object' || !client.rest || !('get' in client.rest)) {
+                return;
+            }
             
             // Fetch all invites for the guild
-            const invites = await client.rest.get(`/guilds/${memberData.guild_id}/invites`) as any[];
+            const invitesResponse = await client.rest.get(`/guilds/${guildId}/invites`);
+            if (!Array.isArray(invitesResponse)) return;
             
             // Get cached invites
-            const cachedInvites = inviteCache.get(memberData.guild_id) || new Map();
+            const cachedInvites = inviteCache.get(guildId) || new Map();
             
             // Find which invite was used
-            for (const invite of invites) {
-                if (!invite.code) continue;
-                const cachedInvite = cachedInvites.get(invite.code);
+            for (const invite of invitesResponse) {
+                if (!invite || typeof invite !== 'object' || !('code' in invite) || typeof invite.code !== 'string') continue;
+                
+                const code = invite.code;
+                const cachedInvite = cachedInvites.get(code);
+                const currentUses = 'uses' in invite && typeof invite.uses === 'number' ? invite.uses : 0;
                 
                 // If uses increased, this invite was used
-                if (cachedInvite && invite.uses > cachedInvite.uses) {
+                if (cachedInvite && currentUses > cachedInvite.uses) {
                     // Check if this invite is tracked in our database
-                    const dbInvite = dbOperations.getInviteByCode(invite.code);
+                    const dbInvite = dbOperations.getInviteByCode(code);
                     if (dbInvite) {
+                        // Get user info
+                        let userId = '';
+                        let username = 'Unknown';
+                        if (data.user && typeof data.user === 'object') {
+                            if ('id' in data.user) {
+                                userId = String(data.user.id);
+                            }
+                            if ('username' in data.user && typeof data.user.username === 'string') {
+                                username = data.user.username;
+                            }
+                        }
+                        
                         // Increment uses in database
                         const updatedInvite = dbOperations.incrementInviteUses(
                             dbInvite.id,
-                            memberData.user.id,
-                            memberData.user.username || 'Unknown'
+                            userId,
+                            username
                         );
-                        console.log(`✅ Tracked invite use: ${invite.code} by ${memberData.user.username || 'Unknown'}`);
+                        console.log(`✅ Tracked invite use: ${code} by ${username}`);
                         
                         // Log the user join
                         if (updatedInvite) {
                             // Fetch guild for logging
-                            const guild = await client.rest.get(`/guilds/${memberData.guild_id}`) as any;
+                            const guild = await client.rest.get(`/guilds/${guildId}`);
                             await logInviteAction(client, guild, 'user_joined', {
-                                userId: memberData.user.id,
+                                userId: userId,
                                 code: dbInvite.code,
                                 uses: updatedInvite.uses,
                                 primarySource: dbInvite.primary_source,
@@ -59,12 +79,14 @@ export class GuildMemberAdd extends GuildMemberAddListener {
             
             // Update cache
             const inviteMap = new Map<string, { uses: number }>();
-            invites.forEach((invite: any) => {
-                if (invite.code) {
-                    inviteMap.set(invite.code, { uses: invite.uses || 0 });
+            for (const invite of invitesResponse) {
+                if (invite && typeof invite === 'object' && 'code' in invite && typeof invite.code === 'string') {
+                    const code = invite.code;
+                    const uses = 'uses' in invite && typeof invite.uses === 'number' ? invite.uses : 0;
+                    inviteMap.set(code, { uses });
                 }
-            });
-            inviteCache.set(memberData.guild_id, inviteMap);
+            }
+            inviteCache.set(guildId, inviteMap);
         } catch (error) {
             console.error('Error tracking invite use:', error);
         }

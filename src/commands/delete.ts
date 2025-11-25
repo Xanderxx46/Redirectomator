@@ -10,16 +10,30 @@ export default class DeleteCommand extends Command {
     options = [
         {
             name: 'code',
-            type: ApplicationCommandOptionType.String,
+            type: ApplicationCommandOptionType.String as const,
             description: 'The invite code to delete (e.g., 8eqeQmTtKY)',
             required: true,
             autocomplete: true
         }
-    ] as any;
-
+    ] 
+    
     async autocomplete(interaction: AutocompleteInteraction) {
-        const focusedValue = String(interaction.options.getFocused()?.value || '');
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        const focusedOption = interaction.options.getFocused();
+        const focusedValue = String(focusedOption?.value || '');
+        
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+        
+        if (!guildId) {
+            return interaction.respond([{
+                name: 'This command can only be used in a server',
+                value: 'no_guild'
+            }]);
+        }
         
         // Use cached invites for faster response
         const invites = getCachedInvites(guildId, () => dbOperations.getInvitesByGuild(guildId));
@@ -62,7 +76,18 @@ export default class DeleteCommand extends Command {
             });
         }
 
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+
+        if (!guildId) {
+            return interaction.reply({ 
+                content: '❌ This command can only be used in a server.'
+            });
+        }
 
         // Check if user has permission (must be in same guild and have manage server)
         if (invite.guild_id !== guildId) {
@@ -72,13 +97,23 @@ export default class DeleteCommand extends Command {
         }
 
         try {
+            let userId: string | null = null;
+            if ('user' in interaction && interaction.user && typeof interaction.user === 'object' && 'id' in interaction.user) {
+                userId = String(interaction.user.id);
+            } else if ('member' in interaction && interaction.member && typeof interaction.member === 'object') {
+                const member = interaction.member;
+                if ('user' in member && member.user && typeof member.user === 'object' && 'id' in member.user) {
+                    userId = String(member.user.id);
+                }
+            }
+
             // Get invite data before deletion for logging
             const inviteData = {
                 code: invite.code,
                 primarySource: invite.primary_source,
                 secondarySource: invite.secondary_source,
                 uses: invite.uses,
-                deletedBy: `<@${(interaction as any).user?.id || (interaction as any).member?.user?.id}>`,
+                deletedBy: userId ? `<@${userId}>` : 'Unknown',
             };
 
             // Delete from database
@@ -88,9 +123,11 @@ export default class DeleteCommand extends Command {
             invalidateInviteCache(guildId);
 
             // Log the deletion
-            const client = (interaction as any).client;
-            const guild = await client.rest.get(`/guilds/${guildId}`) as any;
-            await logInviteAction(client, guild, 'deleted', inviteData);
+            if ('client' in interaction && interaction.client && 'rest' in interaction.client && typeof interaction.client.rest === 'object' && interaction.client.rest !== null && 'get' in interaction.client.rest) {
+                const client = interaction.client;
+                const guild = await client.rest.get(`/guilds/${guildId}`);
+                await logInviteAction(client, guild, 'deleted', inviteData);
+            }
 
             const embed = new Embed({
                 color: 0x5865F2,

@@ -10,8 +10,10 @@ export default class PingCommand extends Command {
         const roundtrip = Date.now() - startTime;
         
         // Get websocket ping from client if available
-        const client = (interaction as any).client;
-        const websocketPing = (client as any).ws?.ping || 0;
+        let websocketPing = 0;
+        if ('client' in interaction && interaction.client && 'ws' in interaction.client && interaction.client.ws && typeof interaction.client.ws === 'object' && 'ping' in interaction.client.ws && typeof interaction.client.ws.ping === 'number') {
+            websocketPing = interaction.client.ws.ping;
+        }
 
         const pingEmbed = new Embed({
             color: 0x5865F2,

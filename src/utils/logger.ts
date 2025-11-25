@@ -1,5 +1,5 @@
 import { dbOperations } from '../database.js';
-import { Embed } from '@buape/carbon';
+import { Client, Embed, Guild, ChannelType} from '@buape/carbon';
 
 interface LogData {
     code?: string;
@@ -14,34 +14,44 @@ interface LogData {
 }
 
 export async function logInviteAction(
-    client: any,
-    guild: any,
+    client: Client,
+    guild: Guild | string | unknown,
     action: 'created' | 'deleted' | 'user_joined',
     data: LogData
 ) {
-    const guildId = typeof guild === 'string' ? guild : guild?.id;
+    let guildId: string | null = null;
+    if (typeof guild === 'string') {
+        guildId = guild;
+    } else if (guild && typeof guild === 'object' && 'id' in guild) {
+        guildId = String(guild.id);
+    }
+    
     if (!guildId) {
         console.error('logInviteAction: No guild ID provided');
         return;
     }
 
-    const logConfig = dbOperations.getLogChannel(guildId) as { channel_id: string; log_types?: string } | undefined;
-    if (!logConfig) return;
+    const logConfig = dbOperations.getLogChannel(guildId);
+    if (!logConfig || typeof logConfig !== 'object' || !('channel_id' in logConfig) || typeof logConfig.channel_id !== 'string') return;
 
     try {
-        // Fetch channel using REST API (Carbon doesn't have guild.channels.fetch)
-        const channel = await client.rest.get(`/channels/${logConfig.channel_id}`) as any;
+        // Fetch channel using Carbon's fetchChannel method
+        if (!('fetchChannel' in client) || typeof client.fetchChannel !== 'function') {
+            console.error('logInviteAction: fetchChannel method not available');
+            return;
+        }
+
+        const channel = await client.fetchChannel(logConfig.channel_id);
         if (!channel) return;
         
-        // Check if channel is a text channel (type 0 = text, 5 = news, 15 = forum)
-        const channelType = channel.type;
-        if (channelType !== 0 && channelType !== 5 && channelType !== 15) return;
+        // Check if channel is a guild text channel
+        if (!('type' in channel) || channel.type !== ChannelType.GuildText) return;
 
         let embed: Embed;
 
         switch (action) {
             case 'created':
-                const createdFields: any[] = [
+                const createdFields: Array<{ name: string; value: string; inline: boolean }> = [
                     { name: 'Primary Source', value: data.primarySource || '', inline: true },
                     { name: 'Secondary Source', value: data.secondarySource || '', inline: true },
                     { name: 'Channel', value: `<#${data.channelId}>`, inline: true }
@@ -93,10 +103,13 @@ export async function logInviteAction(
                 return;
         }
 
-        // Send message using REST API
-        await client.rest.post(`/channels/${logConfig.channel_id}/messages`, {
-            body: { embeds: [embed.serialize()] }
-        });
+        // Send message using channel's send method
+        if (!('send' in channel) || typeof channel.send !== 'function') {
+            console.error('logInviteAction: Channel does not have a send method');
+            return;
+        }
+
+        await channel.send({ embeds: [embed] });
     } catch (error) {
         console.error('Error logging invite action:', error);
     }

@@ -8,25 +8,41 @@ export default class TopCommand extends Command {
     options = [
         {
             name: 'limit',
-            type: ApplicationCommandOptionType.Integer,
+            type: ApplicationCommandOptionType.Integer as const,
             description: 'Number of invites to show (default: 10, max: 25)',
             required: false,
             min_value: 1,
             max_value: 25
         }
-    ] as any;
+    ]
 
     async run(interaction: CommandInteraction) {
         const limit = interaction.options.getInteger('limit') || 10;
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+
+        if (!guildId) {
+            return interaction.reply({ 
+                content: '❌ This command can only be used in a server.' 
+            });
+        }
+
         const topInvites = dbOperations.getTopInvites(guildId, limit);
 
         // Get guild name
         let guildName = 'this server';
         try {
-            const client = (interaction as any).client;
-            const guild = await client.rest.get(`/guilds/${guildId}`) as any;
-            guildName = guild.name || guildName;
+            if ('client' in interaction && interaction.client && 'rest' in interaction.client && typeof interaction.client.rest === 'object' && interaction.client.rest !== null && 'get' in interaction.client.rest) {
+                const client = interaction.client;
+                const guild = await client.rest.get(`/guilds/${guildId}`);
+                if (guild && typeof guild === 'object' && 'name' in guild && typeof guild.name === 'string') {
+                    guildName = guild.name;
+                }
+            }
         } catch (error) {
             // Use default
         }

@@ -6,19 +6,39 @@ export default class LinksCommand extends Command {
     description = 'View all invite links for this server';
 
     async run(interaction: CommandInteraction) {
-        const guildId = (interaction as any).guild_id || (interaction as any).guild?.id;
+        let guildId: string | null = null;
+        if ('guild_id' in interaction && typeof interaction.guild_id === 'string') {
+            guildId = interaction.guild_id;
+        } else if ('guild' in interaction && interaction.guild && typeof interaction.guild === 'object' && 'id' in interaction.guild) {
+            guildId = String(interaction.guild.id);
+        }
+
+        if (!guildId) {
+            return interaction.reply({ 
+                content: '❌ This command can only be used in a server.' 
+            });
+        }
+
         const invites = dbOperations.getInvitesByGuild(guildId);
 
-        if (invites.length === 0) {
-            // Get guild name
-            let guildName = 'this server';
+        const getGuildName = async (): Promise<string> => {
             try {
-                const client = (interaction as any).client;
-                const guild = await client.rest.get(`/guilds/${guildId}`) as any;
-                guildName = guild.name || guildName;
+                if ('client' in interaction && interaction.client && 'rest' in interaction.client && typeof interaction.client.rest === 'object' && interaction.client.rest !== null && 'get' in interaction.client.rest) {
+                    const client = interaction.client;
+                    const guild = await client.rest.get(`/guilds/${guildId}`);
+                    if (guild && typeof guild === 'object' && 'name' in guild && typeof guild.name === 'string') {
+                        return guild.name;
+                    }
+                }
             } catch (error) {
                 // Use default
             }
+            return 'this server';
+        };
+
+        if (invites.length === 0) {
+            // Get guild name
+            const guildName = await getGuildName();
 
             const embed = new Embed({
                 color: 0x5865F2,
@@ -41,14 +61,7 @@ export default class LinksCommand extends Command {
         const totalInvites = invites.length;
 
         // Get guild name
-        let guildName = 'this server';
-        try {
-            const client = (interaction as any).client;
-            const guild = await client.rest.get(`/guilds/${guildId}`) as any;
-            guildName = guild.name || guildName;
-        } catch (error) {
-            // Use default
-        }
+        const guildName = await getGuildName();
 
         const embed = new Embed({
             color: 0x5865F2,

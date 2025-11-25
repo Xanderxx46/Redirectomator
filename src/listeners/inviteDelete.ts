@@ -1,20 +1,16 @@
 import {
-    type Client,
     InviteDeleteListener,
-    type ListenerEventAdditionalData
+    ListenerEventData
 } from "@buape/carbon";
 import { inviteCache } from './ready.js';
 
 export class InviteDelete extends InviteDeleteListener {
     async handle(
-        data: ListenerEventAdditionalData,
-        client: Client
+        data: ListenerEventData[this["type"]],
     ) {
-        const inviteData = data as any;
-        if (!inviteData.guild_id || !inviteData.code) return;
-        if (inviteCache.has(inviteData.guild_id)) {
-            inviteCache.get(inviteData.guild_id)?.delete(inviteData.code);
+        if (!data.guild_id || !data.code) return;
+        if (inviteCache.has(data.guild_id)) {
+            inviteCache.get(data.guild_id)?.delete(data.code);
         }
     }
 }
-
